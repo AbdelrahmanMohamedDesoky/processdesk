@@ -64,6 +64,17 @@ $text = [IO.File]::ReadAllText($cmakePath)
 $definitions = "`nadd_compile_definitions(PHAPP_VERSION_MAJOR=$($parts[0]) PHAPP_VERSION_MINOR=$($parts[1]) PHAPP_VERSION_BUILD=$($parts[2]) PHAPP_VERSION_REVISION=$($parts[3]) PHAPP_VERSION_COMMITHASH=$sha)`n"
 if (!$text.Contains('project(SystemInformer)')) { throw 'Upstream CMake project contract changed.' }
 [IO.File]::WriteAllText($cmakePath, $text.Replace('project(SystemInformer)', "project(SystemInformer)$definitions"), $utf8)
+# Recent upstream additions are present in the source tree but absent from its
+# CMake lists. Add only missing entries; stop adding them when upstream catches up.
+foreach ($entry in @(@('SystemInformer', 'memcfg.c'), @('SystemInformer', 'thrdctx.c'), @('phlib', 'graphbar.c'))) {
+    $projectFile = Join-Path $Source "$($entry[0])/CMakeLists.txt"
+    $projectText = [IO.File]::ReadAllText($projectFile)
+    if (!$projectText.Contains('"' + $entry[1] + '"')) {
+        if (!(Test-Path -LiteralPath (Join-Path $Source "$($entry[0])/$($entry[1])"))) { throw "Missing upstream compatibility source: $($entry[1])" }
+        $projectText += "`ntarget_sources($($entry[0]) PRIVATE `$`{CMAKE_CURRENT_SOURCE_DIR`}/$($entry[1]))`n"
+        [IO.File]::WriteAllText($projectFile, $projectText, $utf8)
+    }
+}
 # No signature is generated or claimed for this user-mode-only distribution.
 $toolsPath = Join-Path $Source 'cmake/tools.cmake'
 $toolsText = [IO.File]::ReadAllText($toolsPath)
