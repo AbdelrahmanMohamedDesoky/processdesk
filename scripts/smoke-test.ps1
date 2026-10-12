@@ -13,10 +13,13 @@ if (!$exitMatch.Success) { throw 'Cannot identify the application Exit command.'
 $exitCommand = [int]$exitMatch.Groups[1].Value
 Add-Type -TypeDefinition @'
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 public static class ProcessDeskValidationNative {
     [DllImport("user32.dll", SetLastError=true)]
     public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder text, int capacity);
 }
 '@
 function Run-Setup([string]$Path, [string[]]$Arguments) {
@@ -41,6 +44,9 @@ try {
         $title = $process.MainWindowTitle
     } while (!$title.StartsWith($config.display_name) -and [DateTime]::UtcNow -lt $deadline)
     if (!$title.StartsWith($config.display_name) -or !$process.Responding) { throw "Branded main window did not become ready (title: $title)." }
+    $windowClass = [Text.StringBuilder]::new(256)
+    [void][ProcessDeskValidationNative]::GetClassName($process.MainWindowHandle, $windowClass, $windowClass.Capacity)
+    if ($windowClass.ToString() -ne "$($config.app_id)MainWindow") { throw "An unexpected startup window intercepted validation: $title / $windowClass" }
     $loadedPlugins = @($process.Modules | Where-Object { $_.FileName.StartsWith((Join-Path $installDir 'plugins'), [StringComparison]::OrdinalIgnoreCase) } | Select-Object -ExpandProperty ModuleName)
     foreach ($plugin in $config.plugins) { if ("$plugin.dll" -notin $loadedPlugins) { throw "Plugin did not load: $plugin" } }
     if (![ProcessDeskValidationNative]::PostMessage($process.MainWindowHandle, 0x0111, [IntPtr]$exitCommand, [IntPtr]::Zero)) { throw 'Cannot request application Exit.' }
@@ -55,4 +61,4 @@ Run-Setup (Join-Path $installDir 'unins000.exe') @('/VERYSILENT', '/SUPPRESSMSGB
 if (Test-Path -LiteralPath $installedExe) { throw 'Uninstaller left the application executable behind.' }
 $driverAfter = @(Get-CimInstance Win32_SystemDriver | Where-Object { $_.Name -match 'KSystemInformer|KProcessHacker' -and $_.State -eq 'Running' } | Select-Object -ExpandProperty Name)
 if ((($driverBefore | Sort-Object) -join ',') -cne (($driverAfter | Sort-Object) -join ',')) { throw 'Driver state changed during application validation.' }
-@{ install = 'passed'; existing_install_upgrade = 'passed'; uninstall = 'passed'; application_launch = 'passed'; title = $title; loaded_plugins = $loadedPlugins; native_version = $Version; driver_state_unchanged = $true; game_compatibility = 'not tested' } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Report -Encoding utf8NoBOM
+@{ install = 'passed'; existing_install_upgrade = 'passed'; uninstall = 'passed'; application_launch = 'passed'; title = $title; window_class = $windowClass.ToString(); loaded_plugins = $loadedPlugins; native_version = $Version; driver_state_unchanged = $true; game_compatibility = 'not tested' } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $Report -Encoding utf8NoBOM

@@ -17,6 +17,7 @@ function Replace-Contract([string]$Relative, [string]$Before, [string]$After, [i
 Replace-Contract 'SystemInformer/main.c' 'PhEnableKsiSupport = !!PhGetIntegerSetting(SETTING_KSI_ENABLE) && !PhStartupParameters.NoKph && !PhIsExecutingInWow64();' 'PhEnableKsiSupport = FALSE; // Application-only distribution; do not connect to or load a kernel driver.'
 Replace-Contract 'plugins/CMakeLists.txt' 'add_subdirectory(Updater)' '# Upstream installer updater excluded from this distribution.'
 Replace-Contract 'plugins/CMakeLists.txt' 'add_subdirectory(AgentTools)' '# Optional remote agent integration excluded from this distribution.'
+Replace-Contract 'plugins/OnlineChecks/main.c' '{ IntegerSettingType, SETTING_NAME_PARTNER_PROMPT_SHOWN, L"0" },' '{ IntegerSettingType, SETTING_NAME_PARTNER_PROMPT_SHOWN, L"1" },'
 if (!$Baseline) {
     Replace-Contract 'SystemInformer/CMakeLists.txt' 'set_target_properties(SystemInformer PROPERTIES ENABLE_EXPORTS TRUE)' "set_target_properties(SystemInformer PROPERTIES ENABLE_EXPORTS TRUE OUTPUT_NAME $($config.app_id))"
     Replace-Contract 'SystemInformer/settings.c' 'PhpAddStringSetting(SETTING_MAIN_WINDOW_CLASS_NAME, L"MainWindowClassName");' "PhpAddStringSetting(SETTING_MAIN_WINDOW_CLASS_NAME, L`"$($config.app_id)MainWindow`" );"

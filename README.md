@@ -8,6 +8,8 @@ Open [Releases](https://github.com/AbdelrahmanMohamedDesoky/processdesk/releases
 
 The installer uses a separate directory, uninstall identity, and settings location. It does not register a driver, replace Windows Task Manager, or configure startup. Settings are preserved on uninstall. The upstream updater is excluded so it cannot replace this application with the stock distribution.
 
+Optional online scanning stays off by default, and its first-run partner popup is suppressed. Configure online scanning explicitly in the plugin's options if you want it.
+
 ## Automatic builds
 
 The workflow resolves the upstream reference in `branding.json` to an exact commit. It builds only when that commit or the build recipe changes. Successful validation produces a versioned release; a failure leaves the last successful release available. A failed build can be retried. Published releases are never overwritten.
