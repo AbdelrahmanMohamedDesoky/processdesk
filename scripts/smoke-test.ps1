@@ -14,12 +14,28 @@ $exitCommand = [int]$exitMatch.Groups[1].Value
 Add-Type -TypeDefinition @'
 using System;
 using System.Text;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public static class ProcessDeskValidationNative {
     [DllImport("user32.dll", SetLastError=true)]
     public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
     public static extern int GetClassName(IntPtr hWnd, StringBuilder text, int capacity);
+    private delegate bool WindowCallback(IntPtr window, IntPtr parameter);
+    [DllImport("user32.dll")]
+    private static extern bool EnumChildWindows(IntPtr parent, WindowCallback callback, IntPtr parameter);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr window, StringBuilder text, int capacity);
+    public static string DescribeChildren(IntPtr parent) {
+        var labels = new List<string>();
+        EnumChildWindows(parent, (window, parameter) => {
+            var text = new StringBuilder(1024);
+            GetWindowText(window, text, text.Capacity);
+            if (text.Length > 0) labels.Add(text.ToString());
+            return labels.Count < 30;
+        }, IntPtr.Zero);
+        return String.Join(" | ", labels);
+    }
 }
 '@
 function Run-Setup([string]$Path, [string[]]$Arguments) {
@@ -46,7 +62,7 @@ try {
     if (!$title.StartsWith($config.display_name) -or !$process.Responding) { throw "Branded main window did not become ready (title: $title)." }
     $windowClass = [Text.StringBuilder]::new(256)
     [void][ProcessDeskValidationNative]::GetClassName($process.MainWindowHandle, $windowClass, $windowClass.Capacity)
-    if ($windowClass.ToString() -ne "$($config.app_id)MainWindow") { throw "An unexpected startup window intercepted validation: $title / $windowClass" }
+    if ($windowClass.ToString() -ne "$($config.app_id)MainWindow") { throw "An unexpected startup window intercepted validation: $title / $windowClass / $([ProcessDeskValidationNative]::DescribeChildren($process.MainWindowHandle))" }
     $loadedPlugins = @($process.Modules | Where-Object { $_.FileName.StartsWith((Join-Path $installDir 'plugins'), [StringComparison]::OrdinalIgnoreCase) } | Select-Object -ExpandProperty ModuleName)
     foreach ($plugin in $config.plugins) { if ("$plugin.dll" -notin $loadedPlugins) { throw "Plugin did not load: $plugin" } }
     if (![ProcessDeskValidationNative]::PostMessage($process.MainWindowHandle, 0x0111, [IntPtr]$exitCommand, [IntPtr]::Zero)) { throw 'Cannot request application Exit.' }

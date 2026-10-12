@@ -35,7 +35,7 @@ if (!$Baseline) {
                 param($match)
                 $literal = $match.Value
                 if ($literal -match 'Copyright|copyright|All rights reserved') { return $literal }
-                return $literal.Replace('System Informer', $config.display_name)
+                return $literal.Replace('System Informer', $config.display_name).Replace('SystemInformer.exe', "$($config.app_id).exe")
             })
             if ($file.Extension -eq '.manifest') { $updated = $updated.Replace('<description>System Informer</description>', "<description>$($config.display_name)</description>") }
             if ($updated -ne $text) { [IO.File]::WriteAllText($file.FullName, $updated, $utf8) }
