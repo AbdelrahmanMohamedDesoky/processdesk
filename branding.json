@@ -1,0 +1,11 @@
+{
+  "display_name": "ProcessDesk",
+  "app_id": "ProcessDesk",
+  "publisher": "ProcessDesk contributors",
+  "upstream_repository": "winsiderss/systeminformer",
+  "upstream_ref": "master",
+  "repository": "AbdelrahmanMohamedDesoky/processdesk",
+  "version_major": 1,
+  "version_minor": 0,
+  "plugins": ["DotNetTools", "ExtendedNotifications", "ExtendedServices", "ExtendedTools", "HardwareDevices", "NetworkTools", "OnlineChecks", "ToolStatus", "UserNotes", "WindowExplorer"]
+}

@@ -1,0 +1,129 @@
+name: Build and release
+
+on:
+  workflow_dispatch:
+    inputs:
+      upstream_ref:
+        description: 'Optional upstream branch, tag, or commit (blank uses branding.json)'
+        type: string
+        default: ''
+      force:
+        description: 'Rebuild even if already published (existing releases stay unchanged)'
+        type: boolean
+        default: false
+      baseline:
+        description: 'Compile an application-only baseline without publishing'
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+    paths: ['branding.json', 'scripts/**', 'packaging/**', 'assets/**', '.github/workflows/build.yml']
+  schedule:
+    # Temporary frequent checks to verify the first real scheduled execution.
+    - cron: '*/5 * * * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: processdesk-release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.upstream.outputs.sha }}
+      tag: ${{ steps.upstream.outputs.tag }}
+      build: ${{ steps.upstream.outputs.build }}
+      exists: ${{ steps.upstream.outputs.exists }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Resolve upstream and skip published builds
+        id: upstream
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECIPE_HASH: ${{ hashFiles('branding.json', 'scripts/**', 'packaging/**', 'assets/**', '.github/workflows/build.yml') }}
+          REQUESTED_REF: ${{ inputs.upstream_ref }}
+          FORCE_BUILD: ${{ inputs.force || inputs.baseline }}
+        run: ./scripts/check-upstream.ps1 -UpstreamRef $env:REQUESTED_REF -Force:($env:FORCE_BUILD -eq 'true')
+
+  build:
+    needs: check
+    if: needs.check.outputs.build == 'true'
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Compile, package, and validate
+        shell: pwsh
+        env:
+          UPSTREAM_SHA: ${{ needs.check.outputs.sha }}
+          RECIPE_HASH: ${{ hashFiles('branding.json', 'scripts/**', 'packaging/**', 'assets/**', '.github/workflows/build.yml') }}
+          BASELINE: ${{ inputs.baseline }}
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_NOLOGO: '1'
+        run: ./scripts/build.ps1 -UpstreamSha $env:UPSTREAM_SHA -RecipeHash $env:RECIPE_HASH -Baseline:($env:BASELINE -eq 'true')
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: success() && inputs.baseline != true
+        with:
+          name: distribution
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 3
+
+  publish:
+    needs: [check, build]
+    if: needs.check.outputs.exists != 'true' && inputs.baseline != true && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: distribution
+          path: dist
+      - name: Publish validated distribution
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $config = Get-Content branding.json -Raw | ConvertFrom-Json
+          if ($env:GITHUB_REPOSITORY -ne $config.repository) { throw 'Unexpected publishing repository.' }
+          foreach ($line in Get-Content dist/SHA256SUMS.txt) {
+            if ($line -notmatch '^([a-f0-9]{64})  ([A-Za-z0-9._-]+)$') { throw 'Invalid checksum entry.' }
+            if ((Get-FileHash (Join-Path dist $Matches[2]) -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Matches[1]) { throw 'Downloaded artifact checksum mismatch.' }
+          }
+          $manifest = Get-Content dist/build-manifest.json -Raw | ConvertFrom-Json
+          $validation = Get-Content dist/validation.json -Raw | ConvertFrom-Json
+          if ($validation.application_launch -ne 'passed' -or $validation.install -ne 'passed' -or $validation.uninstall -ne 'passed' -or !$validation.driver_state_unchanged) { throw 'Validation failed.' }
+          @"
+          $($manifest.name) $($manifest.version), built from upstream commit $($manifest.upstream_sha).
+
+          The installer and portable ZIP contain the application and listed plugins. Driver loading is disabled. This is an unsigned community build.
+
+          Automated checks: installation, application launch, plugin loading, installation over an existing copy, uninstall, and unchanged driver state. Game compatibility has not been tested.
+
+          See build-manifest.json, validation.json, branding.patch, and SHA256SUMS.txt for build details.
+          "@ | Set-Content release-notes.md
+          $assets = @(Get-ChildItem dist -File | Select-Object -ExpandProperty FullName)
+          & gh release create $env:RELEASE_TAG @assets --repo $config.repository --draft --title "$($manifest.name) $($manifest.version)" --notes-file release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed; the previous published release is unchanged.' }
+          & gh release edit $env:RELEASE_TAG --repo $config.repository --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Publishing failed; inspect the draft in this repository.' }
+          "Published $($manifest.name) $($manifest.version): https://github.com/$($config.repository)/releases/tag/$env:RELEASE_TAG" | Add-Content $env:GITHUB_STEP_SUMMARY
