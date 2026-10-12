@@ -18,6 +18,17 @@ Replace-Contract 'SystemInformer/main.c' 'PhEnableKsiSupport = !!PhGetIntegerSet
 Replace-Contract 'plugins/CMakeLists.txt' 'add_subdirectory(Updater)' '# Upstream installer updater excluded from this distribution.'
 Replace-Contract 'plugins/CMakeLists.txt' 'add_subdirectory(AgentTools)' '# Optional remote agent integration excluded from this distribution.'
 Replace-Contract 'plugins/OnlineChecks/main.c' '{ IntegerSettingType, SETTING_NAME_PARTNER_PROMPT_SHOWN, L"0" },' '{ IntegerSettingType, SETTING_NAME_PARTNER_PROMPT_SHOWN, L"1" },'
+# The startup whitelist must match the packaged DLLs, including deliberate omissions.
+$pluginPath = Join-Path $Source 'SystemInformer/plugin.c'
+$pluginText = [IO.File]::ReadAllText($pluginPath)
+$pluginPattern = '(?s)static CONST PH_STRINGREF DefaultPluginName\[\] =\s*\{.*?\};'
+if ([regex]::Matches($pluginText, $pluginPattern).Count -ne 1) { throw 'Upstream default plugin list contract changed.' }
+$pluginEntries = foreach ($plugin in $config.plugins) {
+    if ($plugin -notmatch '^[A-Za-z][A-Za-z0-9]{1,49}$') { throw 'Invalid plugin name in branding configuration.' }
+    "    PH_STRINGREF_INIT(L`"$plugin.dll`"),"
+}
+$pluginReplacement = "static CONST PH_STRINGREF DefaultPluginName[] =`n{`n$($pluginEntries -join "`n")`n};"
+[IO.File]::WriteAllText($pluginPath, [regex]::Replace($pluginText, $pluginPattern, $pluginReplacement), $utf8)
 if (!$Baseline) {
     Replace-Contract 'SystemInformer/CMakeLists.txt' 'set_target_properties(SystemInformer PROPERTIES ENABLE_EXPORTS TRUE)' "set_target_properties(SystemInformer PROPERTIES ENABLE_EXPORTS TRUE OUTPUT_NAME $($config.app_id))"
     Replace-Contract 'SystemInformer/settings.c' 'PhpAddStringSetting(SETTING_MAIN_WINDOW_CLASS_NAME, L"MainWindowClassName");' "PhpAddStringSetting(SETTING_MAIN_WINDOW_CLASS_NAME, L`"$($config.app_id)MainWindow`" );"
