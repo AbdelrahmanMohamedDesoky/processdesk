@@ -7,6 +7,18 @@ $config = Get-Content (Join-Path $root 'branding.json') -Raw | ConvertFrom-Json
 $installDir = Join-Path $env:RUNNER_TEMP "$($config.app_id)-installer-validation"
 if (Test-Path -LiteralPath $installDir) { throw 'Installer test directory already exists.' }
 $driverBefore = @(Get-CimInstance Win32_SystemDriver | Where-Object { $_.Name -match 'KSystemInformer|KProcessHacker' -and $_.State -eq 'Running' } | Select-Object -ExpandProperty Name)
+$resourceHeader = Get-Content (Join-Path $root '.work/source/SystemInformer/resource.h') -Raw
+$exitMatch = [regex]::Match($resourceHeader, '(?m)^#define\s+ID_HACKER_EXIT\s+(\d+)\s*$')
+if (!$exitMatch.Success) { throw 'Cannot identify the application Exit command.' }
+$exitCommand = [int]$exitMatch.Groups[1].Value
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class ProcessDeskValidationNative {
+    [DllImport("user32.dll", SetLastError=true)]
+    public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+}
+'@
 function Run-Setup([string]$Path, [string[]]$Arguments) {
     $process = Start-Process -FilePath $Path -ArgumentList $Arguments -PassThru
     if (!$process.WaitForExit(120000)) { $process.Kill(); throw 'Installer test timed out.' }
@@ -31,7 +43,7 @@ try {
     if (!$title.StartsWith($config.display_name) -or !$process.Responding) { throw "Branded main window did not become ready (title: $title)." }
     $loadedPlugins = @($process.Modules | Where-Object { $_.FileName.StartsWith((Join-Path $installDir 'plugins'), [StringComparison]::OrdinalIgnoreCase) } | Select-Object -ExpandProperty ModuleName)
     foreach ($plugin in $config.plugins) { if ("$plugin.dll" -notin $loadedPlugins) { throw "Plugin did not load: $plugin" } }
-    [void]$process.CloseMainWindow()
+    if (![ProcessDeskValidationNative]::PostMessage($process.MainWindowHandle, 0x0111, [IntPtr]$exitCommand, [IntPtr]::Zero)) { throw 'Cannot request application Exit.' }
     if (!$process.WaitForExit(15000)) { throw 'Application did not close normally.' }
 } finally {
     if (!$process.HasExited) { $process.Kill(); $process.WaitForExit() }
